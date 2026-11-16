@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Casilleros</title>
+<style>
+*{box-sizing:border-box;user-select:none;-webkit-user-select:none;cursor:none!important}
+html,body{margin:0;height:100%;font-family:sans-serif;background:#111;color:#fff;overflow:hidden}
+.pantalla{display:none;height:100%;padding:14px;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
+.pantalla.activa{display:flex}
+h1{margin:0;font-size:30px} p{margin:0;font-size:20px}
+button{font-size:24px;border:0;border-radius:14px;padding:18px 28px;color:#fff;background:#c51d4a}
+button:disabled{opacity:.4}
+button.sec{background:#444} button.grande{width:420px;padding:36px;font-size:30px}
+.campos{display:flex;gap:10px;width:100%}
+.campo{flex:1;background:#222;border:3px solid #444;border-radius:10px;padding:12px;font-size:24px;text-align:left;min-height:54px}
+.campo.sel{border-color:#c51d4a}
+.teclado{display:flex;flex-direction:column;gap:6px;width:100%}
+.fila{display:flex;gap:6px;justify-content:center}
+.tecla{background:#333;font-size:22px;padding:10px 0;min-width:58px;border-radius:8px}
+.tecla.ancha{min-width:200px}
+video,img.cam{width:480px;height:270px;border-radius:12px;background:#000;object-fit:cover}
+.msg{color:#ffd166}
+.bien{color:#06d6a0}
+#numero{font-size:110px;font-weight:bold;color:#06d6a0}
+@media (max-height:520px){
+  .pantalla{padding:8px;gap:8px}
+  h1{font-size:24px} p{font-size:17px}
+  button{font-size:20px;padding:12px 22px}
+  button.grande{padding:22px;font-size:26px}
+  .tecla{padding:7px 0;font-size:20px}
+  img.cam{width:400px;height:225px}
+  #numero{font-size:90px}
+}
+</style></head><body>
+
+<div id="inicio" class="pantalla activa">
+  <h1>Casilleros inteligentes</h1>
+  <button class="grande" onclick="irRegistro()">Registrarme</button>
+  <button class="grande" onclick="irAbrir()">Abrir mi casillero</button>
+</div>
+
+<div id="datos" class="pantalla">
+  <h1>Tus datos</h1>
+  <div class="campos">
+    <div id="cNombre" class="campo sel" onclick="selCampo('nombre')"></div>
+    <div id="cTel" class="campo" onclick="selCampo('tel')"></div>
+  </div>
+  <div id="teclado" class="teclado"></div>
+  <div class="fila">
+    <button class="sec" onclick="mostrar('inicio')">Cancelar</button>
+    <button onclick="irCamaraRegistro()">Siguiente</button>
+  </div>
+  <p id="errDatos" class="msg"></p>
+</div>
+
+<div id="camReg" class="pantalla">
+  <h1>Registro facial</h1>
+  <img id="imgReg" class="cam">
+  <p id="progreso">Mira a la camara y toca Capturar (0/3)</p>
+  <p id="msgReg" class="msg"></p>
+  <div class="fila">
+    <button class="sec" onclick="cancelarRegistro()">Cancelar</button>
+    <button id="btnCap" onclick="capturar()">Capturar</button>
+  </div>
+</div>
+
+<div id="camAbrir" class="pantalla">
+  <h1 id="tituloAbrir">Reconociendo...</h1>
+  <img id="imgAbrir" class="cam">
+  <p id="subAbrir">Mira de frente a la camara</p>
+  <button id="btnCancelAbrir" class="sec" onclick="cancelarAbrir()">Cancelar</button>
+</div>
+
+<div id="opciones" class="pantalla">
+  <h1 id="hola"></h1>
+  <p id="tuCas"></p>
+  <button class="grande" onclick="abrir('abrir')">Solo abrirlo</button>
+  <button class="grande" onclick="abrir('liberar')">Abrirlo y dejarlo libre</button>
+  <button class="sec" onclick="mostrar('inicio')">Cancelar</button>
+</div>
+
+<div id="resultado" class="pantalla">
+  <h1 id="resTitulo"></h1>
+  <div id="numero"></div>
+  <p id="resTexto"></p>
+  <button class="sec" onclick="mostrar('inicio')">Volver</button>
+</div>
+
+<script>
+let campoActivo='nombre', nombre='', tel='', usuarioId=null, temporizador=null, timerInactividad=null, cancelado=false;
+const $=id=>document.getElementById(id);
+const esperar=ms=>new Promise(r=>setTimeout(r,ms));
+const PIXEL_VACIO='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+function detenerStream(imgId){
+  const el=$(imgId);
+  if(el.getAttribute('src') && el.getAttribute('src')!==PIXEL_VACIO){
+    el.src=PIXEL_VACIO;
+    el.removeAttribute('src');
+  }
+}
+
+function reiniciarInactividad(id){
+  clearTimeout(timerInactividad);
+  if(id!=='inicio' && id!=='resultado'){
+    // DPM: Si dejan la pantalla abandonada por 35s, vuelve a inicio (estado SLEEP)
+    timerInactividad=setTimeout(()=>{
+      cancelado=true;
+      api('/api/camara/dormir').catch(()=>{});
+      mostrar('inicio');
+    }, 35000);
+  }
+}
+
+function mostrar(id){
+  document.querySelectorAll('.pantalla').forEach(p=>p.classList.remove('activa'));
+  $(id).classList.add('activa');
+  if(id!=='camReg') detenerStream('imgReg');
+  if(id!=='camAbrir') detenerStream('imgAbrir');
+  clearTimeout(temporizador);
+  reiniciarInactividad(id);
+  if(id==='inicio'){
+    nombre='';tel='';cancelado=true;
+    api('/api/camara/dormir').catch(()=>{});
+  }
+}
+
+async function api(url,datos){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(datos||{})});
+  return r.json();
+}
+
+/* ---- teclado ---- */
+const FILAS=['qwertyuiop','asdfghjklñ','zxcvbnm'];
+function dibujarTeclado(){
+  const t=$('teclado'); t.innerHTML='';
+  if(campoActivo==='tel'){
+    ['123','456','789','0'].forEach(f=>{
+      const fila=document.createElement('div');fila.className='fila';
+      [...f].forEach(c=>fila.appendChild(tecla(c)));
+      if(f==='0') fila.appendChild(tecla('⌫','borrar'));
+      t.appendChild(fila);
+    });
+  }else{
+    FILAS.forEach(f=>{const fila=document.createElement('div');fila.className='fila';
+      [...f].forEach(c=>fila.appendChild(tecla(c)));t.appendChild(fila);});
+    const ult=document.createElement('div');ult.className='fila';
+    ult.appendChild(tecla('espacio',' ','ancha'));ult.appendChild(tecla('⌫','borrar'));
+    t.appendChild(ult);
+  }
+}
+function tecla(txt,valor,extra){
+  const b=document.createElement('button');b.className='tecla '+(extra||'');b.textContent=txt;
+  b.onclick=()=>pulsar(valor===undefined?txt:valor);return b;
+}
+function pulsar(v){
+  reiniciarInactividad('datos');
+  let s=campoActivo==='nombre'?nombre:tel;
+  if(v==='borrar') s=s.slice(0,-1);
+  else if(campoActivo==='tel'){ if(s.length<10) s+=v; }
+  else{ if(s.length<30){ s+= (s===''||s.endsWith(' '))? v.toUpperCase():v; } }
+  if(campoActivo==='nombre') nombre=s; else tel=s;
+  refrescarCampos();
+}
+function selCampo(c){campoActivo=c;dibujarTeclado();refrescarCampos();}
+function refrescarCampos(){
+  $('cNombre').textContent=nombre||'Nombre';
+  $('cTel').textContent=tel||'Telefono (09XXXXXXXX)';
+  $('cNombre').classList.toggle('sel',campoActivo==='nombre');
+  $('cTel').classList.toggle('sel',campoActivo==='tel');
+}
+
+/* ---- registro ---- */
+function irRegistro(){nombre='';tel='';$('errDatos').textContent='';selCampo('nombre');mostrar('datos');}
+async function irCamaraRegistro(){
+  if(nombre.trim().length<2){$('errDatos').textContent='Escribe tu nombre';return;}
+  if(!/^09\d{8}$/.test(tel)){$('errDatos').textContent='El telefono debe tener 10 digitos y empezar con 09';return;}
+  await api('/api/registro/reiniciar');
+  $('progreso').textContent='Mira a la camara y toca Capturar (0/3)';
+  $('msgReg').textContent='';$('btnCap').disabled=false;
+  mostrar('camReg');$('imgReg').src='/video?'+Date.now();
+}
+async function capturar(){
+  reiniciarInactividad('camReg');
+  $('btnCap').disabled=true;$('msgReg').textContent='';
+  const r=await api('/api/registro/muestra');
+  $('btnCap').disabled=false;
+  if(!r.ok){
+    $('msgReg').textContent=r.msg;
+    if(r.duplicado){$('progreso').textContent='No se puede registrar';$('btnCap').disabled=true;}
+    return;
+  }
+  $('progreso').textContent=`Captura ${r.n}/${r.total}. Cambia un poco el angulo`;
+  if(r.n>=r.total){
+    detenerStream('imgReg'); // Apaga el stream antes de guardar en BD
+    $('btnCap').disabled=true;$('progreso').textContent='Guardando...';
+    const g=await api('/api/registro/guardar',{nombre:nombre.trim(),telefono:tel});
+    if(g.ok) final('Registro listo',`Bienvenido, ${nombre.trim()}`,'');
+    else {$('btnCap').disabled=false;$('progreso').textContent='Intenta de nuevo';$('msgReg').textContent=g.msg;
+          await api('/api/registro/reiniciar');
+          $('imgReg').src='/video?'+Date.now();}
+  }
+}
+function cancelarRegistro(){mostrar('inicio');}
+
+/* ---- abrir ---- */
+async function irAbrir(){
+  mostrar('camAbrir');cancelado=false;
+  $('tituloAbrir').textContent='Reconociendo...';
+  $('tituloAbrir').classList.remove('bien');
+  $('subAbrir').textContent='Mira de frente a la camara';
+  $('btnCancelAbrir').style.display='';
+  $('imgAbrir').src='/video?'+Date.now();
+
+  const r=await api('/api/identificar');
+  if(cancelado) return;
+  if(!r.ok){final('Acceso denegado',r.msg,'');return;}
+
+  usuarioId=r.usuario_id;
+  $('tituloAbrir').textContent='Bienvenido, '+r.nombre;
+  $('tituloAbrir').classList.add('bien');
+  $('subAbrir').textContent='Un momento...';
+  $('btnCancelAbrir').style.display='none';
+  await esperar(1800);
+  if(cancelado) return;
+
+  detenerStream('imgAbrir'); // Corta el video apenas termina la bienvenida
+  if(r.casillero){
+    $('hola').textContent='Hola, '+r.nombre;
+    $('tuCas').textContent='Tu casillero es el '+r.casillero;
+    mostrar('opciones');
+  }else{
+    abrir('abrir');
+  }
+}
+function cancelarAbrir(){cancelado=true;mostrar('inicio');}
+async function abrir(modo){
+  const r=await api('/api/abrir',{usuario_id:usuarioId,modo});
+  if(!r.ok){final('Sin casilleros',r.msg,'');return;}
+  final('Casillero abierto',
+        modo==='liberar'?'Quedara libre al cerrar la puerta':'Cierra la puerta al terminar',r.casillero);
+}
+function final(titulo,texto,num){
+  $('resTitulo').textContent=titulo;$('resTexto').textContent=texto;$('numero').textContent=num;
+  mostrar('resultado');
+  temporizador=setTimeout(()=>mostrar('inicio'),8000);
+}
+dibujarTeclado();refrescarCampos();
+
+</script></body></html>

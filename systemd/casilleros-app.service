@@ -1,0 +1,16 @@
+[Unit]
+Description=Aplicacion de casilleros
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=jpintria
+Group=jpintria
+WorkingDirectory=/home/jpintria/proyecto
+ExecStart=/home/jpintria/proyecto/venv/bin/python -u /home/jpintria/proyecto/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
